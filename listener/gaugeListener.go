@@ -35,14 +35,20 @@ import (
 
 const pluginID = "html-report"
 
-type GaugeResultHandlerFn func(*gauge_messages.SuiteExecutionResult)
-type GaugeResultItemHandlerFn func(*gauge_messages.SuiteExecutionResultItem)
+type GaugeResultHandlerFn func(*gauge_messages.ExecutionStartingRequest)
+type GaugeResultItemHandlerFn func(*gauge_messages.ScenarioExecutionEndingRequest)
+type GaugeExecutionEndingHandlerFn func(*gauge_messages.SuiteExecutionResult)
+type GaugeSpecExecutionStartingHandlerFn func(*gauge_messages.SpecExecutionStartingRequest)
+type GaugeSpecExecutionEndingHandlerFn func(*gauge_messages.SpecExecutionEndingRequest)
 
 type GaugeListener struct {
-	connection          net.Conn
-	onResultHandler     GaugeResultHandlerFn
-	onResultItemHandler GaugeResultItemHandlerFn
-	stopChan            chan bool
+	connection                     net.Conn
+	onExecutionStartingHandler     GaugeResultHandlerFn
+	onScenarioEndingItemHandler    GaugeResultItemHandlerFn
+	onExecutionEndingHandler       GaugeExecutionEndingHandlerFn
+	onSpecExecutionStartingHandler GaugeSpecExecutionStartingHandlerFn
+	onSpecExecutionEndingHandler   GaugeSpecExecutionEndingHandlerFn
+	stopChan                       chan bool
 }
 
 func NewGaugeListener(host string, port string, killChan chan bool) (*GaugeListener, error) {
@@ -54,12 +60,24 @@ func NewGaugeListener(host string, port string, killChan chan bool) (*GaugeListe
 	}
 }
 
-func (gaugeListener *GaugeListener) OnSuiteResult(h GaugeResultHandlerFn) {
-	gaugeListener.onResultHandler = h
+func (gaugeListener *GaugeListener) OnExecutionStarting(h GaugeResultHandlerFn) {
+	gaugeListener.onExecutionStartingHandler = h
 }
 
-func (gaugeListener *GaugeListener) OnSuiteResultItem(h GaugeResultItemHandlerFn) {
-	gaugeListener.onResultItemHandler = h
+func (gaugeListener *GaugeListener) OnScenarioEndingItem(h GaugeResultItemHandlerFn) {
+	gaugeListener.onScenarioEndingItemHandler = h
+}
+
+func (gaugeListener *GaugeListener) OnExecutionEnding(h GaugeExecutionEndingHandlerFn) {
+	gaugeListener.onExecutionEndingHandler = h
+}
+
+func (gaugeListener *GaugeListener) OnSpecExecutionStarting(h GaugeSpecExecutionStartingHandlerFn) {
+	gaugeListener.onSpecExecutionStartingHandler = h
+}
+
+func (gaugeListener *GaugeListener) OnSpecExecutionEnding(h GaugeSpecExecutionEndingHandlerFn) {
+	gaugeListener.onSpecExecutionEndingHandler = h
 }
 
 func (gaugeListener *GaugeListener) Start() {
@@ -92,15 +110,27 @@ func (gaugeListener *GaugeListener) processMessages(buffer *bytes.Buffer) {
 					logger.Debug("Received Kill Message, exiting...")
 					gaugeListener.connection.Close()
 					os.Exit(0)
+				case gauge_messages.Message_ExecutionStarting:
+					result := message.GetExecutionStartingRequest()
+					logger.Debug("Received ExecutionStarting, processing...")
+					if result.SuiteResult != nil {
+						go gaugeListener.sendPings()
+						gaugeListener.onExecutionStartingHandler(result)
+					}
 				case gauge_messages.Message_SuiteExecutionResult:
-					logger.Debug("Received SuiteExecutionResult, processing...")
-					go gaugeListener.sendPings()
 					result := message.GetSuiteExecutionResult()
-					gaugeListener.onResultHandler(result)
-				case gauge_messages.Message_SuiteExecutionResultItem:
-					result := message.GetSuiteExecutionResultItem()
-					logger.Debugf("Received SuiteExecutionResultItem for %s, processing...", result.ResultItem.FileName)
-					gaugeListener.onResultItemHandler(result)
+					gaugeListener.onExecutionEndingHandler(result)
+				case gauge_messages.Message_ScenarioExecutionEnding:
+					result := message.GetScenarioExecutionEndingRequest()
+					gaugeListener.onScenarioEndingItemHandler(result)
+				case gauge_messages.Message_SpecExecutionStarting:
+					result := message.GetSpecExecutionStartingRequest()
+					if result.SpecResult != nil {
+						gaugeListener.onSpecExecutionStartingHandler(result)
+					}
+				case gauge_messages.Message_SpecExecutionEnding:
+					result := message.GetSpecExecutionEndingRequest()
+					gaugeListener.onSpecExecutionEndingHandler(result)
 				}
 				buffer.Next(messageBoundary)
 				if buffer.Len() == 0 {

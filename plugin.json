@@ -19,5 +19,6 @@
         "maximum": ""
     },
     "capabilities" : [
+        "stream_result"
     ]
 }

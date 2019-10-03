@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"strings"
@@ -61,45 +62,68 @@ func (T timeStampedNameGenerator) randomName() string {
 }
 
 type reportAccumulator struct {
-	result      *gauge_messages.SuiteExecutionResult
-	specMap     map[string]*gauge_messages.ProtoSpec
+	result      *gauge_messages.ExecutionStartingRequest
+	specMap     map[string]*gauge_messages.ProtoSpecResult
 	chunkSize   int64
 	searchIndex *generator.SearchIndex
 	stopChan    chan bool
+	sync.Mutex
 }
 
-func (r *reportAccumulator) Meta(res *gauge_messages.SuiteExecutionResult) {
-	if !res.SuiteResult.Chunked {
-		_, err := createReport(res, true, r.stopChan)
-		if err != nil {
-			logger.Fatalf("%s", err.Error())
-		}
-		return
-	}
-	r.result = res
-	r.searchIndex = generator.NewSearchIndex()
-	r.specMap = make(map[string]*gauge_messages.ProtoSpec, 0)
-	for _, specRes := range r.result.SuiteResult.SpecResults {
-		r.specMap[specRes.ProtoSpec.FileName] = specRes.ProtoSpec
-		r.searchIndex.AddRawSpec(specRes.ProtoSpec)
-	}
-	if res.SuiteResult.ChunkSize == 0 {
-		r.write()
+func (r *reportAccumulator) Meta(res *gauge_messages.ExecutionStartingRequest) {
+	r.Lock()
+	defer r.Unlock()
+	if r.result == nil {
+		r.result = res
+		r.result.SuiteResult.SpecResults = make([]*gauge_messages.ProtoSpecResult, 0)
+		r.searchIndex = generator.NewSearchIndex()
+		r.specMap = make(map[string]*gauge_messages.ProtoSpecResult, 0)
 	}
 }
 
-func (r *reportAccumulator) AddItem(i *gauge_messages.SuiteExecutionResultItem) {
-	pItem := r.specMap[i.ResultItem.FileName]
-	if pItem == nil {
-		logger.Debugf("received item for %s that does not exist in Meta.", i.ResultItem.FileName)
+func (r *reportAccumulator) AddSpecStartingItem(i *gauge_messages.SpecExecutionStartingRequest) {
+	r.Lock()
+	defer r.Unlock()
+	fileNmae := i.SpecResult.ProtoSpec.FileName
+	logger.Debugf("AddSpecStartingItem=fileNmae : %s", fileNmae)
+	r.result.SuiteResult.SpecResults = append(r.result.SuiteResult.SpecResults, i.SpecResult)
+	r.specMap[fileNmae] = i.SpecResult
+	r.searchIndex.AddRawSpec(i.SpecResult.ProtoSpec)
+}
+
+func (r *reportAccumulator) AddSpecEndingItem(i *gauge_messages.SpecExecutionEndingRequest) {
+	r.Lock()
+	defer r.Unlock()
+	fileNmae := i.SpecResult.ProtoSpec.FileName
+	logger.Infof("AddSpecEndingItem=fileNmae : %s\n\n", fileNmae)
+	specItem := r.specMap[fileNmae]
+	// logger.Infof("AddSpecEndingItem=r.specMap : %v\n\n", r.specMap)
+	specResult := i.SpecResult
+	// logger.Infof("AddSpecEndingItem=specResult : %v", specResult)
+	specResult.ProtoSpec = specItem.ProtoSpec
+	*specItem = *specResult
+}
+
+func (r *reportAccumulator) AddScenarioEndingItem(i *gauge_messages.ScenarioExecutionEndingRequest) {
+	r.Lock()
+	defer r.Unlock()
+	fileNmae := i.CurrentExecutionInfo.CurrentSpec.FileName
+	specItem := r.specMap[fileNmae]
+	if specItem == nil {
+		logger.Debugf("received item for %s that does not exist in Meta.", fileNmae)
 		return
 	}
-	pItem.Items = append(pItem.Items, i.ResultItem)
-	r.searchIndex.AddRawItem(i.ResultItem)
+	specItem.ProtoSpec.Items = append(specItem.ProtoSpec.Items, i.ScenarioResult.ProtoItem)
+	r.searchIndex.AddRawItem(i.ScenarioResult.ProtoItem)
 	r.chunkSize++
-	if r.chunkSize == r.result.SuiteResult.ChunkSize {
-		r.write()
-	}
+}
+
+func (r *reportAccumulator) Write(i *gauge_messages.SuiteExecutionResult) {
+	r.Lock()
+	defer r.Unlock()
+	i.SuiteResult.SpecResults = r.result.SuiteResult.SpecResults
+	r.result.SuiteResult = i.SuiteResult
+	r.write()
 }
 
 func (r *reportAccumulator) write() {
@@ -121,12 +145,15 @@ func createExecutionReport() {
 		logger.Fatal("Could not create the gauge listener")
 	}
 	r := &reportAccumulator{stopChan: stopChan}
-	listener.OnSuiteResult(r.Meta)
-	listener.OnSuiteResultItem(r.AddItem)
+	listener.OnExecutionStarting(r.Meta)
+	listener.OnSpecExecutionStarting(r.AddSpecStartingItem)
+	listener.OnScenarioEndingItem(r.AddScenarioEndingItem)
+	listener.OnSpecExecutionEnding(r.AddSpecEndingItem)
+	listener.OnExecutionEnding(r.Write)
 	listener.Start()
 }
 
-func createReport(suiteResult *gauge_messages.SuiteExecutionResult, searchIndex bool, stop chan bool) (string, error) {
+func createReport(suiteResult *gauge_messages.ExecutionStartingRequest, searchIndex bool, stop chan bool) (string, error) {
 	defer func(s chan bool) { s <- true }(stop)
 	projectRoot, err := common.GetProjectRoot()
 	if err != nil {
