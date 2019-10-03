@@ -130,7 +130,7 @@ func TestCreateReportWritesToStopPing(t *testing.T) {
 	defer func(e string) { os.Setenv("GAUGE_PROJECT_ROOT", e) }(os.Getenv("GAUGE_PROJECT_ROOT"))
 	os.Setenv("GAUGE_PROJECT_ROOT", root)
 
-	res := &gauge_messages.SuiteExecutionResult{SuiteResult: &gauge_messages.ProtoSuiteResult{}}
+	res := &gauge_messages.ExecutionStartingRequest{SuiteResult: &gauge_messages.ProtoSuiteResult{}}
 
 	c := make(chan bool)
 	go createReport(res, false, c)
