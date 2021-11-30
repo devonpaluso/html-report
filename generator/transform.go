@@ -567,7 +567,7 @@ func toFragments(protoFragments []*gm.Fragment) []*fragment {
 			case gm.Parameter_Table:
 				fragments = append(fragments, &fragment{FragmentKind: tableFragmentKind, Table: toTable(f.GetParameter().GetTable())})
 			case gm.Parameter_Special_Table:
-				fragments = append(fragments, &fragment{FragmentKind: specialTableFragmentKind, Name: f.GetParameter().GetName(), Text: toCsv(f.GetParameter().GetTable()), FileName: toFileName(f.GetParameter().GetName())})
+				fragments = append(fragments, &fragment{FragmentKind: specialTableFragmentKind, Table: toTable(f.GetParameter().GetTable()), Name: f.GetParameter().GetName(), FileName: toFileName(f.GetParameter().GetName())})
 			case gm.Parameter_Special_String:
 				fragments = append(fragments, &fragment{FragmentKind: specialStringFragmentKind, Name: f.GetParameter().GetName(), Text: f.GetParameter().GetValue(), FileName: toFileName(f.GetParameter().GetName())})
 			}

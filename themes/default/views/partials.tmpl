@@ -531,6 +531,20 @@
     </div>
 {{end}}
 
+/* Brings up a Modal, used to display content of external file in a Table display */
+{{define "ModalTable"}}
+  <span class="modal-link">&lt;{{.Name | escapeHTML }}&gt;</span>
+    <div class="modal">
+      <h2 class="modal-title">{{ .FileName }}</h2>
+      <span class="close">&times;</span>
+      <div class="modal-content">
+        <div>
+          {{template "Table" .}}
+        </div>
+      </div>
+    </div>
+{{end}}
+
 /* Renders the body of a Step */
 {{define "stepBodyDiv"}}
   {{range .Fragments}}
@@ -543,7 +557,7 @@
     {{else if eq .FragmentKind 3}}
       {{template "Modal" .}}
     {{else if eq .FragmentKind 4}}
-      {{template "Modal" .}}
+      {{template "ModalTable" .}}
     {{else if eq .FragmentKind 5}}
       <div class="inline-table">
         <div>
